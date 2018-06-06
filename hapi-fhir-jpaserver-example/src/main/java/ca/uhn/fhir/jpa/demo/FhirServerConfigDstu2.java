@@ -51,10 +51,14 @@ public class FhirServerConfigDstu2 extends BaseJavaConfigDstu2 {
 	@Bean(destroyMethod = "close")
 	public DataSource dataSource() {
 		BasicDataSource retVal = new BasicDataSource();
-		retVal.setDriver(new org.apache.derby.jdbc.EmbeddedDriver());
-		retVal.setUrl("jdbc:derby:directory:target/jpaserver_derby_files;create=true");
-		retVal.setUsername("");
-		retVal.setPassword("");
+		//retVal.setDriver(new org.apache.derby.jdbc.EmbeddedDriver());
+		retVal.setDriver(new org.postgresql.Driver());
+		//retVal.setUrl("jdbc:derby:directory:target/jpaserver_derby_files;create=true");
+		retVal.setUrl("jdbc:postgresql://localhost:5432/fhir");
+		//retVal.setUsername("");
+		//retVal.setPassword("");
+		retVal.setUsername("fhir");
+	        retVal.setPassword("fhir");
 		return retVal;
 	}
 
@@ -70,7 +74,8 @@ public class FhirServerConfigDstu2 extends BaseJavaConfigDstu2 {
 
 	private Properties jpaProperties() {
 		Properties extraProperties = new Properties();
-		extraProperties.put("hibernate.dialect", DerbyTenSevenHapiFhirDialect.class.getName());
+		//extraProperties.put("hibernate.dialect", DerbyTenSevenHapiFhirDialect.class.getName());
+		extraProperties.put("hibernate.dialect", org.hibernate.dialect.PostgreSQL94Dialect.class.getName());
 		extraProperties.put("hibernate.format_sql", "true");
 		extraProperties.put("hibernate.show_sql", "false");
 		extraProperties.put("hibernate.hbm2ddl.auto", "update");
