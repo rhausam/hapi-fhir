@@ -34,13 +34,19 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 	@Autowired
 	private ITermCodeSystemDao myTermCodeSystemDao;
 
+	@After
+	public void after() {
+		myDaoConfig.setDeferIndexingForCodesystemsOfSize(new DaoConfig().getDeferIndexingForCodesystemsOfSize());
+		BaseHapiTerminologySvcImpl.setForceSaveDeferredAlwaysForUnitTest(false);
+	}
+
 	private IIdType createCodeSystem() {
 		CodeSystem codeSystem = new CodeSystem();
 		codeSystem.setUrl(CS_URL);
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
-		ResourceTable table = myResourceTableDao.findOne(id.getIdPartAsLong());
+		ResourceTable table = myResourceTableDao.findById(id.getIdPartAsLong()).orElseThrow(IllegalArgumentException::new);
 
 		TermCodeSystemVersion cs = new TermCodeSystemVersion();
 		cs.setResource(table);
@@ -91,7 +97,7 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
-		ResourceTable table = myResourceTableDao.findOne(id.getIdPartAsLong());
+		ResourceTable table = myResourceTableDao.findById(id.getIdPartAsLong()).orElseThrow(IllegalArgumentException::new);
 
 		TermCodeSystemVersion cs = new TermCodeSystemVersion();
 		cs.setResource(table);
@@ -104,6 +110,31 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 		return id;
 	}
 
+	public void createLoincSystemWithSomeCodes() {
+		runInTransaction(() -> {
+			CodeSystem codeSystem = new CodeSystem();
+			codeSystem.setUrl(CS_URL);
+			codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
+			IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
+
+			ResourceTable table = myResourceTableDao.findById(id.getIdPartAsLong()).orElseThrow(IllegalArgumentException::new);
+
+			TermCodeSystemVersion cs = new TermCodeSystemVersion();
+			cs.setResource(table);
+
+			TermConcept code;
+			code = new TermConcept(cs, "50015-7");
+			code.addPropertyString("SYSTEM", "Bld/Bone mar^Donor");
+			cs.getConcepts().add(code);
+
+			code = new TermConcept(cs, "43343-3");
+			code.addPropertyString("SYSTEM", "Ser");
+			cs.getConcepts().add(code);
+
+			myTermSvc.storeNewCodeSystemVersion(table.getId(), CS_URL, "SYSTEM NAME", cs);
+		});
+	}
+
 	@Test
 	public void testCreateDuplicateCodeSystemUri() {
 		CodeSystem codeSystem = new CodeSystem();
@@ -111,7 +142,7 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
-		ResourceTable table = myResourceTableDao.findOne(id.getIdPartAsLong());
+		ResourceTable table = myResourceTableDao.findById(id.getIdPartAsLong()).orElseThrow(IllegalArgumentException::new);
 
 		TermCodeSystemVersion cs = new TermCodeSystemVersion();
 		cs.setResource(table);
@@ -123,7 +154,7 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 		TermConcept parentA = new TermConcept(cs, "ParentA");
 		cs.getConcepts().add(parentA);
 		id = myCodeSystemDao.update(codeSystem, null, true, true, mySrd).getId().toUnqualified();
-		table = myResourceTableDao.findOne(id.getIdPartAsLong());
+		table = myResourceTableDao.findById(id.getIdPartAsLong()).orElseThrow(IllegalArgumentException::new);
 		cs.setResource(table);
 		myTermSvc.storeNewCodeSystemVersion(table.getId(), CS_URL, "SYSTEM NAME", cs);
 
@@ -132,7 +163,7 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 		codeSystem.setUrl(CS_URL);
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
-		table = myResourceTableDao.findOne(id.getIdPartAsLong());
+		table = myResourceTableDao.findById(id.getIdPartAsLong()).orElseThrow(IllegalArgumentException::new);
 		cs.setResource(table);
 		try {
 			myTermSvc.storeNewCodeSystemVersion(table.getId(), CS_URL, "SYSTEM NAME", cs);
@@ -141,6 +172,40 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 			assertThat(e.getMessage(), containsString("Can not create multiple code systems with URI \"http://example.com/my_code_system\", already have one with resource ID: CodeSystem/"));
 		}
 
+	}
+
+	@Test
+	public void testCreatePropertiesAndDesignationsWithDeferredConcepts() {
+		myDaoConfig.setDeferIndexingForCodesystemsOfSize(1);
+		BaseHapiTerminologySvcImpl.setForceSaveDeferredAlwaysForUnitTest(true);
+
+		createCodeSystem();
+
+		Validate.notNull(myTermSvc);
+		myTermSvc.saveDeferred();
+		myTermSvc.saveDeferred();
+		myTermSvc.saveDeferred();
+		myTermSvc.saveDeferred();
+		myTermSvc.saveDeferred();
+		myTermSvc.saveDeferred();
+
+		ValueSet vs = new ValueSet();
+		ValueSet.ConceptSetComponent include = vs.getCompose().addInclude();
+		include.setSystem(CS_URL);
+		include.addConcept().setCode("childAAB");
+		ValueSet outcome = myTermSvc.expandValueSet(vs);
+
+		List<String> codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, containsInAnyOrder("childAAB"));
+
+		ValueSet.ValueSetExpansionContainsComponent concept = outcome.getExpansion().getContains().get(0);
+		assertEquals("childAAB", concept.getCode());
+		assertEquals("http://example.com/my_code_system", concept.getSystem());
+		assertEquals(null, concept.getDisplay());
+		assertEquals("D1S", concept.getDesignation().get(0).getUse().getSystem());
+		assertEquals("D1C", concept.getDesignation().get(0).getUse().getCode());
+		assertEquals("D1D", concept.getDesignation().get(0).getUse().getDisplay());
+		assertEquals("D1V", concept.getDesignation().get(0).getValue());
 	}
 
 	@Test
@@ -195,6 +260,123 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 	}
 
 	@Test
+	public void testExpandValueSetPropertySearchWithRegexExclude() {
+		createLoincSystemWithSomeCodes();
+
+		List<String> codes;
+		ValueSet vs;
+		ValueSet outcome;
+		ValueSet.ConceptSetComponent exclude;
+
+		// Include
+		vs = new ValueSet();
+		vs.getCompose()
+			.addInclude()
+			.setSystem(CS_URL);
+
+		exclude = vs.getCompose().addExclude();
+		exclude.setSystem(CS_URL);
+		exclude
+			.addFilter()
+			.setProperty("SYSTEM")
+			.setOp(ValueSet.FilterOperator.REGEX)
+			.setValue(".*\\^Donor$");
+		outcome = myTermSvc.expandValueSet(vs);
+		codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, containsInAnyOrder("43343-3"));
+	}
+
+	@Test
+	public void testExpandValueSetPropertySearchWithRegexInclude() {
+		// create codes with "SYSTEM" property "Bld/Bone mar^Donor" and "Ser"
+		createLoincSystemWithSomeCodes();
+
+		List<String> codes;
+		ValueSet vs;
+		ValueSet outcome;
+		ValueSet.ConceptSetComponent include;
+
+		// Include
+		vs = new ValueSet();
+		include = vs.getCompose().addInclude();
+		include.setSystem(CS_URL);
+		include
+			.addFilter()
+			.setProperty("SYSTEM")
+			.setOp(ValueSet.FilterOperator.REGEX)
+			.setValue(".*\\^Donor$");
+		outcome = myTermSvc.expandValueSet(vs);
+		codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, containsInAnyOrder("50015-7"));
+
+		// Include
+		vs = new ValueSet();
+		include = vs.getCompose().addInclude();
+		include.setSystem(CS_URL);
+		include
+			.addFilter()
+			.setProperty("SYSTEM")
+			.setOp(ValueSet.FilterOperator.REGEX)
+			.setValue("\\^Donor$");
+		outcome = myTermSvc.expandValueSet(vs);
+		codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, containsInAnyOrder("50015-7"));
+
+		// Include
+		vs = new ValueSet();
+		include = vs.getCompose().addInclude();
+		include.setSystem(CS_URL);
+		include
+			.addFilter()
+			.setProperty("SYSTEM")
+			.setOp(ValueSet.FilterOperator.REGEX)
+			.setValue("\\^Dono$");
+		outcome = myTermSvc.expandValueSet(vs);
+		codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, empty());
+
+		// Include
+		vs = new ValueSet();
+		include = vs.getCompose().addInclude();
+		include.setSystem(CS_URL);
+		include
+			.addFilter()
+			.setProperty("SYSTEM")
+			.setOp(ValueSet.FilterOperator.REGEX)
+			.setValue("^Donor$");
+		outcome = myTermSvc.expandValueSet(vs);
+		codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, empty());
+
+		// Include
+		vs = new ValueSet();
+		include = vs.getCompose().addInclude();
+		include.setSystem(CS_URL);
+		include
+			.addFilter()
+			.setProperty("SYSTEM")
+			.setOp(ValueSet.FilterOperator.REGEX)
+			.setValue("\\^Dono");
+		outcome = myTermSvc.expandValueSet(vs);
+		codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, containsInAnyOrder("50015-7"));
+
+		// Include
+		vs = new ValueSet();
+		include = vs.getCompose().addInclude();
+		include.setSystem(CS_URL);
+		include
+			.addFilter()
+			.setProperty("SYSTEM")
+			.setOp(ValueSet.FilterOperator.REGEX)
+			.setValue("^Ser$");
+		outcome = myTermSvc.expandValueSet(vs);
+		codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, containsInAnyOrder("43343-3"));
+
+	}
+
+	@Test
 	public void testExpandValueSetWholeSystem() {
 		createCodeSystem();
 
@@ -208,73 +390,6 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 		codes = toCodesContains(outcome.getExpansion().getContains());
 		assertThat(codes, containsInAnyOrder("ParentWithNoChildrenA", "ParentWithNoChildrenB", "ParentWithNoChildrenC", "ParentA", "childAAA", "childAAB", "childAA", "childAB", "ParentB"));
 	}
-
-	@Test
-	public void testPropertiesAndDesignationsPreservedInExpansion() {
-		createCodeSystem();
-
-		List<String> codes;
-
-		ValueSet vs = new ValueSet();
-		ValueSet.ConceptSetComponent include = vs.getCompose().addInclude();
-		include.setSystem(CS_URL);
-		include.addConcept().setCode("childAAB");
-		ValueSet outcome = myTermSvc.expandValueSet(vs);
-
-		codes = toCodesContains(outcome.getExpansion().getContains());
-		assertThat(codes, containsInAnyOrder("childAAB"));
-
-		ValueSet.ValueSetExpansionContainsComponent concept = outcome.getExpansion().getContains().get(0);
-		assertEquals("childAAB", concept.getCode());
-		assertEquals("http://example.com/my_code_system", concept.getSystem());
-		assertEquals(null, concept.getDisplay());
-		assertEquals("D1S", concept.getDesignation().get(0).getUse().getSystem());
-		assertEquals("D1C", concept.getDesignation().get(0).getUse().getCode());
-		assertEquals("D1D", concept.getDesignation().get(0).getUse().getDisplay());
-		assertEquals("D1V", concept.getDesignation().get(0).getValue());
-	}
-
-	@After
-	public void after() {
-		myDaoConfig.setDeferIndexingForCodesystemsOfSize(new DaoConfig().getDeferIndexingForCodesystemsOfSize());
-		BaseHapiTerminologySvcImpl.setForceSaveDeferredAlwaysForUnitTest(false);
-	}
-
-
-	@Test
-	public void testCreatePropertiesAndDesignationsWithDeferredConcepts() {
-		myDaoConfig.setDeferIndexingForCodesystemsOfSize(1);
-		BaseHapiTerminologySvcImpl.setForceSaveDeferredAlwaysForUnitTest(true);
-
-		createCodeSystem();
-
-		Validate.notNull(myTermSvc);
-		myTermSvc.saveDeferred();
-		myTermSvc.saveDeferred();
-		myTermSvc.saveDeferred();
-		myTermSvc.saveDeferred();
-		myTermSvc.saveDeferred();
-		myTermSvc.saveDeferred();
-
-		ValueSet vs = new ValueSet();
-		ValueSet.ConceptSetComponent include = vs.getCompose().addInclude();
-		include.setSystem(CS_URL);
-		include.addConcept().setCode("childAAB");
-		ValueSet outcome = myTermSvc.expandValueSet(vs);
-
-		List<String> codes = toCodesContains(outcome.getExpansion().getContains());
-		assertThat(codes, containsInAnyOrder("childAAB"));
-
-		ValueSet.ValueSetExpansionContainsComponent concept = outcome.getExpansion().getContains().get(0);
-		assertEquals("childAAB", concept.getCode());
-		assertEquals("http://example.com/my_code_system", concept.getSystem());
-		assertEquals(null, concept.getDisplay());
-		assertEquals("D1S", concept.getDesignation().get(0).getUse().getSystem());
-		assertEquals("D1C", concept.getDesignation().get(0).getUse().getCode());
-		assertEquals("D1D", concept.getDesignation().get(0).getUse().getDisplay());
-		assertEquals("D1V", concept.getDesignation().get(0).getValue());
-	}
-
 
 	@Test
 	public void testFindCodesAbove() {
@@ -378,6 +493,31 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 	}
 
 	@Test
+	public void testPropertiesAndDesignationsPreservedInExpansion() {
+		createCodeSystem();
+
+		List<String> codes;
+
+		ValueSet vs = new ValueSet();
+		ValueSet.ConceptSetComponent include = vs.getCompose().addInclude();
+		include.setSystem(CS_URL);
+		include.addConcept().setCode("childAAB");
+		ValueSet outcome = myTermSvc.expandValueSet(vs);
+
+		codes = toCodesContains(outcome.getExpansion().getContains());
+		assertThat(codes, containsInAnyOrder("childAAB"));
+
+		ValueSet.ValueSetExpansionContainsComponent concept = outcome.getExpansion().getContains().get(0);
+		assertEquals("childAAB", concept.getCode());
+		assertEquals("http://example.com/my_code_system", concept.getSystem());
+		assertEquals(null, concept.getDisplay());
+		assertEquals("D1S", concept.getDesignation().get(0).getUse().getSystem());
+		assertEquals("D1C", concept.getDesignation().get(0).getUse().getCode());
+		assertEquals("D1D", concept.getDesignation().get(0).getUse().getDisplay());
+		assertEquals("D1V", concept.getDesignation().get(0).getValue());
+	}
+
+	@Test
 	public void testReindexTerminology() {
 		IIdType id = createCodeSystem();
 
@@ -393,7 +533,7 @@ public class TerminologySvcImplDstu3Test extends BaseJpaDstu3Test {
 		codeSystem.setContent(CodeSystemContentMode.NOTPRESENT);
 		IIdType id = myCodeSystemDao.create(codeSystem, mySrd).getId().toUnqualified();
 
-		ResourceTable table = myResourceTableDao.findOne(id.getIdPartAsLong());
+		ResourceTable table = myResourceTableDao.findById(id.getIdPartAsLong()).orElseThrow(IllegalArgumentException::new);
 
 		TermCodeSystemVersion cs = new TermCodeSystemVersion();
 		cs.setResource(table);

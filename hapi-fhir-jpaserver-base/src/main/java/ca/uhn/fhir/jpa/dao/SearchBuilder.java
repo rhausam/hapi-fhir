@@ -1,5 +1,58 @@
 package ca.uhn.fhir.jpa.dao;
 
+import static org.apache.commons.lang3.StringUtils.defaultString;
+import static org.apache.commons.lang3.StringUtils.isBlank;
+import static org.apache.commons.lang3.StringUtils.isNotBlank;
+
+import java.math.BigDecimal;
+import java.math.MathContext;
+import java.util.ArrayList;
+import java.util.Collection;
+import java.util.Collections;
+import java.util.Date;
+import java.util.HashMap;
+import java.util.HashSet;
+import java.util.Iterator;
+import java.util.List;
+import java.util.Map;
+import java.util.Map.Entry;
+import java.util.Set;
+
+import javax.persistence.EntityManager;
+import javax.persistence.TypedQuery;
+import javax.persistence.criteria.AbstractQuery;
+import javax.persistence.criteria.CriteriaBuilder;
+import javax.persistence.criteria.CriteriaBuilder.In;
+import javax.persistence.criteria.CriteriaQuery;
+import javax.persistence.criteria.Expression;
+import javax.persistence.criteria.From;
+import javax.persistence.criteria.Join;
+import javax.persistence.criteria.JoinType;
+import javax.persistence.criteria.Order;
+import javax.persistence.criteria.Path;
+import javax.persistence.criteria.Predicate;
+import javax.persistence.criteria.Root;
+import javax.persistence.criteria.Subquery;
+
+import org.apache.commons.lang3.ObjectUtils;
+import org.apache.commons.lang3.StringUtils;
+import org.apache.commons.lang3.Validate;
+import org.apache.commons.lang3.builder.EqualsBuilder;
+import org.apache.commons.lang3.builder.HashCodeBuilder;
+import org.apache.commons.lang3.tuple.Pair;
+import org.hibernate.ScrollMode;
+import org.hibernate.ScrollableResults;
+import org.hibernate.query.Query;
+import org.hl7.fhir.dstu3.model.BaseResource;
+import org.hl7.fhir.instance.model.api.IAnyResource;
+import org.hl7.fhir.instance.model.api.IBaseResource;
+import org.hl7.fhir.instance.model.api.IIdType;
+
+import com.google.common.annotations.VisibleForTesting;
+import com.google.common.collect.Lists;
+import com.google.common.collect.Maps;
+import com.google.common.collect.Sets;
+
 /*
  * #%L
  * HAPI FHIR JPA Server
@@ -19,17 +72,46 @@ package ca.uhn.fhir.jpa.dao;
  * limitations under the License.
  * #L%
  */
-
-import ca.uhn.fhir.context.*;
+import ca.uhn.fhir.context.BaseRuntimeChildDefinition;
+import ca.uhn.fhir.context.BaseRuntimeDeclaredChildDefinition;
+import ca.uhn.fhir.context.BaseRuntimeElementDefinition;
+import ca.uhn.fhir.context.ConfigurationException;
+import ca.uhn.fhir.context.FhirContext;
+import ca.uhn.fhir.context.RuntimeChildChoiceDefinition;
+import ca.uhn.fhir.context.RuntimeChildResourceDefinition;
+import ca.uhn.fhir.context.RuntimeResourceDefinition;
+import ca.uhn.fhir.context.RuntimeSearchParam;
 import ca.uhn.fhir.jpa.dao.data.IForcedIdDao;
+import ca.uhn.fhir.jpa.dao.data.IResourceHistoryTableDao;
 import ca.uhn.fhir.jpa.dao.data.IResourceIndexedSearchParamUriDao;
-import ca.uhn.fhir.jpa.entity.*;
+import ca.uhn.fhir.jpa.dao.data.IResourceTagDao;
+import ca.uhn.fhir.jpa.entity.BaseHasResource;
+import ca.uhn.fhir.jpa.entity.BaseResourceIndexedSearchParam;
+import ca.uhn.fhir.jpa.entity.ForcedId;
+import ca.uhn.fhir.jpa.entity.ResourceHistoryTable;
+import ca.uhn.fhir.jpa.entity.ResourceIndexedSearchParamDate;
+import ca.uhn.fhir.jpa.entity.ResourceIndexedSearchParamNumber;
+import ca.uhn.fhir.jpa.entity.ResourceIndexedSearchParamQuantity;
+import ca.uhn.fhir.jpa.entity.ResourceIndexedSearchParamString;
+import ca.uhn.fhir.jpa.entity.ResourceIndexedSearchParamToken;
+import ca.uhn.fhir.jpa.entity.ResourceIndexedSearchParamUri;
+import ca.uhn.fhir.jpa.entity.ResourceLink;
+import ca.uhn.fhir.jpa.entity.ResourceTable;
+import ca.uhn.fhir.jpa.entity.ResourceTag;
+import ca.uhn.fhir.jpa.entity.SearchParam;
+import ca.uhn.fhir.jpa.entity.SearchParamPresent;
+import ca.uhn.fhir.jpa.entity.TagDefinition;
+import ca.uhn.fhir.jpa.entity.TagTypeEnum;
 import ca.uhn.fhir.jpa.search.JpaRuntimeSearchParam;
 import ca.uhn.fhir.jpa.term.IHapiTerminologySvc;
 import ca.uhn.fhir.jpa.term.VersionIndependentConcept;
 import ca.uhn.fhir.jpa.util.BaseIterator;
 import ca.uhn.fhir.jpa.util.ScrollableResultsIterator;
-import ca.uhn.fhir.model.api.*;
+import ca.uhn.fhir.model.api.IPrimitiveDatatype;
+import ca.uhn.fhir.model.api.IQueryParameterType;
+import ca.uhn.fhir.model.api.IResource;
+import ca.uhn.fhir.model.api.Include;
+import ca.uhn.fhir.model.api.ResourceMetadataKeyEnum;
 import ca.uhn.fhir.model.base.composite.BaseCodingDt;
 import ca.uhn.fhir.model.base.composite.BaseIdentifierDt;
 import ca.uhn.fhir.model.base.composite.BaseQuantityDt;
@@ -41,41 +123,25 @@ import ca.uhn.fhir.rest.api.Constants;
 import ca.uhn.fhir.rest.api.RestSearchParameterTypeEnum;
 import ca.uhn.fhir.rest.api.SortOrderEnum;
 import ca.uhn.fhir.rest.api.SortSpec;
-import ca.uhn.fhir.rest.param.*;
+import ca.uhn.fhir.rest.param.CompositeParam;
+import ca.uhn.fhir.rest.param.DateParam;
+import ca.uhn.fhir.rest.param.DateRangeParam;
+import ca.uhn.fhir.rest.param.HasParam;
+import ca.uhn.fhir.rest.param.NumberParam;
+import ca.uhn.fhir.rest.param.ParamPrefixEnum;
+import ca.uhn.fhir.rest.param.QuantityParam;
+import ca.uhn.fhir.rest.param.ReferenceParam;
+import ca.uhn.fhir.rest.param.StringParam;
+import ca.uhn.fhir.rest.param.TokenParam;
+import ca.uhn.fhir.rest.param.TokenParamModifier;
+import ca.uhn.fhir.rest.param.UriParam;
+import ca.uhn.fhir.rest.param.UriParamQualifierEnum;
 import ca.uhn.fhir.rest.server.exceptions.InternalErrorException;
 import ca.uhn.fhir.rest.server.exceptions.InvalidRequestException;
 import ca.uhn.fhir.rest.server.exceptions.MethodNotAllowedException;
 import ca.uhn.fhir.rest.server.exceptions.ResourceNotFoundException;
 import ca.uhn.fhir.util.StopWatch;
 import ca.uhn.fhir.util.UrlUtil;
-import com.google.common.annotations.VisibleForTesting;
-import com.google.common.collect.Lists;
-import com.google.common.collect.Maps;
-import com.google.common.collect.Sets;
-import org.apache.commons.lang3.ObjectUtils;
-import org.apache.commons.lang3.StringUtils;
-import org.apache.commons.lang3.Validate;
-import org.apache.commons.lang3.builder.EqualsBuilder;
-import org.apache.commons.lang3.builder.HashCodeBuilder;
-import org.apache.commons.lang3.tuple.Pair;
-import org.hibernate.ScrollMode;
-import org.hibernate.ScrollableResults;
-import org.hibernate.query.Query;
-import org.hl7.fhir.dstu3.model.BaseResource;
-import org.hl7.fhir.instance.model.api.IAnyResource;
-import org.hl7.fhir.instance.model.api.IBaseResource;
-import org.hl7.fhir.instance.model.api.IIdType;
-
-import javax.persistence.EntityManager;
-import javax.persistence.TypedQuery;
-import javax.persistence.criteria.*;
-import javax.persistence.criteria.CriteriaBuilder.In;
-import java.math.BigDecimal;
-import java.math.MathContext;
-import java.util.*;
-import java.util.Map.Entry;
-
-import static org.apache.commons.lang3.StringUtils.*;
 
 /**
  * The SearchBuilder is responsible for actually forming the SQL query that handles
@@ -87,6 +153,7 @@ public class SearchBuilder implements ISearchBuilder {
 	private static final org.slf4j.Logger ourLog = org.slf4j.LoggerFactory.getLogger(SearchBuilder.class);
 	private static Long NO_MORE = -1L;
 	private static HandlerTypeEnum ourLastHandlerMechanismForUnitTest;
+	private static SearchParameterMap ourLastHandlerParamsForUnitTest;
 	private List<Long> myAlsoIncludePids;
 	private CriteriaBuilder myBuilder;
 	private BaseHapiFhirDao<?> myCallingDao;
@@ -107,12 +174,17 @@ public class SearchBuilder implements ISearchBuilder {
 	private IHapiTerminologySvc myTerminologySvc;
 	private int myFetchSize;
 
+	protected IResourceHistoryTableDao myResourceHistoryTableDao;
+	protected IResourceTagDao myResourceTagDao;
+	
 	/**
 	 * Constructor
 	 */
-	public SearchBuilder(FhirContext theFhirContext, EntityManager theEntityManager, IFulltextSearchSvc theFulltextSearchSvc,
-								BaseHapiFhirDao<?> theDao,
-								IResourceIndexedSearchParamUriDao theResourceIndexedSearchParamUriDao, IForcedIdDao theForcedIdDao, IHapiTerminologySvc theTerminologySvc, ISearchParamRegistry theSearchParamRegistry) {
+	public SearchBuilder(FhirContext theFhirContext, EntityManager theEntityManager,
+			IFulltextSearchSvc theFulltextSearchSvc, BaseHapiFhirDao<?> theDao,
+			IResourceIndexedSearchParamUriDao theResourceIndexedSearchParamUriDao, IForcedIdDao theForcedIdDao,
+			IHapiTerminologySvc theTerminologySvc, ISearchParamRegistry theSearchParamRegistry,
+			IResourceHistoryTableDao theResourceHistoryTableDao, IResourceTagDao theResourceTagDao) {
 		myContext = theFhirContext;
 		myEntityManager = theEntityManager;
 		myFulltextSearchSvc = theFulltextSearchSvc;
@@ -121,6 +193,8 @@ public class SearchBuilder implements ISearchBuilder {
 		myForcedIdDao = theForcedIdDao;
 		myTerminologySvc = theTerminologySvc;
 		mySearchParamRegistry = theSearchParamRegistry;
+		myResourceHistoryTableDao = theResourceHistoryTableDao;
+		myResourceTagDao = theResourceTagDao;
 	}
 
 	private void addPredicateComposite(String theResourceName, RuntimeSearchParam theParamDef, List<? extends IQueryParameterType> theNextAnd) {
@@ -1017,6 +1091,8 @@ public class SearchBuilder implements ISearchBuilder {
 					num = builder.or(lowPred, highPred);
 				}
 				break;
+			case ENDS_BEFORE:
+			case STARTS_AFTER:
 			default:
 				String msg = myContext.getLocalizer().getMessage(SearchBuilder.class, invalidMessageName, thePrefix.getValue(), theParam.getValueAsQueryToken(myContext));
 				throw new InvalidRequestException(msg);
@@ -1302,6 +1378,7 @@ public class SearchBuilder implements ISearchBuilder {
 									}
 
 									Set<String> uniqueQueryStrings = BaseHapiFhirDao.extractCompositeStringUniquesValueChains(myResourceName, params);
+									ourLastHandlerParamsForUnitTest = theParams;
 									ourLastHandlerMechanismForUnitTest = HandlerTypeEnum.UNIQUE_INDEX;
 									return new UniqueIndexIterator(uniqueQueryStrings);
 
@@ -1313,6 +1390,7 @@ public class SearchBuilder implements ISearchBuilder {
 			}
 		}
 
+		ourLastHandlerParamsForUnitTest = theParams;
 		ourLastHandlerMechanismForUnitTest = HandlerTypeEnum.STANDARD_QUERY;
 		return new QueryIterator();
 	}
@@ -1526,6 +1604,8 @@ public class SearchBuilder implements ISearchBuilder {
 				sortAttrName = new String[] {"myValue"};
 				joinType = JoinEnum.QUANTITY;
 				break;
+			case COMPOSITE:
+			case HAS:
 			default:
 				throw new InvalidRequestException("This server does not support _sort specifications of type " + param.getParamType() + " - Can't serve _sort=" + theSort.getParamName());
 		}
@@ -1603,9 +1683,26 @@ public class SearchBuilder implements ISearchBuilder {
 
 		List<ResourceTable> resultList = q.getResultList();
 
+		//-- Issue #963: Load resource histories based on pids once to improve the performance
+		Map<Long, ResourceHistoryTable> historyMap = getResourceHistoryMap(pids);
+		
+		//-- preload all tags with tag definition if any
+		Map<Long, Collection<ResourceTag>> tagMap = getResourceTagMap(resultList);
+		
+		//-- pre-load all forcedId
+		Map<Long, ForcedId> forcedIdMap = getForcedIdMap(pids);
+				
+		ForcedId forcedId = null;
+		Long resourceId = null;
 		for (ResourceTable next : resultList) {
 			Class<? extends IBaseResource> resourceType = context.getResourceDefinition(next.getResourceType()).getImplementingClass();
-			IBaseResource resource = theDao.toResource(resourceType, next, theForHistoryOperation);
+			
+			resourceId = next.getId();
+			forcedId = forcedIdMap.get(resourceId);
+			if (forcedId != null)
+				next.setForcedId(forcedId);
+			
+			IBaseResource resource = theDao.toResource(resourceType, next, historyMap.get(next.getId()), tagMap.get(next.getId()), theForHistoryOperation);
 			if (resource == null) {
 				ourLog.warn("Unable to find resource {}/{}/_history/{} in database", next.getResourceType(), next.getIdDt().getIdPart(), next.getVersion());
 				continue;
@@ -1634,6 +1731,79 @@ public class SearchBuilder implements ISearchBuilder {
 		}
 	}
 
+	//-- load all history in to the map
+	private Map<Long, ResourceHistoryTable> getResourceHistoryMap(Collection<Long> pids) {
+
+		Map<Long, ResourceHistoryTable> historyMap = new HashMap<Long, ResourceHistoryTable>();
+
+		if (pids.size() == 0)
+			return historyMap;
+
+		Collection<ResourceHistoryTable> historyList = myResourceHistoryTableDao.findByResourceIds(pids);
+
+		for (ResourceHistoryTable history : historyList) {
+
+			historyMap.put(history.getResourceId(), history);
+		}
+
+		return historyMap;
+	}
+	
+	private Map<Long, Collection<ResourceTag>> getResourceTagMap(List<ResourceTable> resourceList) {		
+		
+		List<Long> idList = new ArrayList<Long>(resourceList.size());
+		
+		//-- find all resource has tags
+		for (ResourceTable resource: resourceList) {			
+			if (resource.isHasTags())
+				idList.add(resource.getId());
+		}
+		
+		Map<Long, Collection<ResourceTag>> tagMap = new HashMap<Long, Collection<ResourceTag>>();
+		
+		//-- no tags
+		if (idList.size() == 0)
+			return tagMap;
+		
+		//-- get all tags for the idList
+		Collection<ResourceTag> tagList = myResourceTagDao.findByResourceIds(idList);
+	
+		//-- build the map, key = resourceId, value = list of ResourceTag
+		Long resourceId;
+		Collection<ResourceTag> tagCol;
+		for (ResourceTag tag : tagList) {
+			
+			resourceId = tag.getResourceId();
+			tagCol = tagMap.get(resourceId);
+			if (tagCol == null) {
+				tagCol = new ArrayList<ResourceTag>();
+				tagCol.add(tag);
+				tagMap.put(resourceId, tagCol);
+			} else {
+				tagCol.add(tag);
+			}
+		}
+
+		return tagMap;		
+	}
+
+	//-- load all forcedId in to the map
+	private Map<Long, ForcedId> getForcedIdMap(Collection<Long> pids) {
+
+		Map<Long, ForcedId> forceIdMap = new HashMap<Long, ForcedId>();
+
+		if (pids.size() == 0)
+			return forceIdMap;
+
+		Collection<ForcedId> forceIdList = myForcedIdDao.findByResourcePids(pids);
+
+		for (ForcedId forcedId : forceIdList) {
+
+			forceIdMap.put(forcedId.getResourcePid(), forcedId);
+		}
+
+		return forceIdMap;
+	}
 	@Override
 	public void loadResourcesByPid(Collection<Long> theIncludePids, List<IBaseResource> theResourceListToPopulate, Set<Long> theRevIncludedPids, boolean theForHistoryOperation,
 											 EntityManager entityManager, FhirContext context, IDao theDao) {
@@ -1698,7 +1868,6 @@ public class SearchBuilder implements ISearchBuilder {
 			roundCounts++;
 
 			HashSet<Long> pidsToInclude = new HashSet<>();
-			Set<Long> nextRoundOmit = new HashSet<>();
 
 			for (Iterator<Include> iter = includes.iterator(); iter.hasNext(); ) {
 				Include nextInclude = iter.next();
@@ -1792,8 +1961,6 @@ public class SearchBuilder implements ISearchBuilder {
 					theMatches.add(next);
 				}
 			}
-
-			pidsToInclude.removeAll(nextRoundOmit);
 
 			addedSomeThisRound = allAdded.addAll(pidsToInclude);
 			nextRoundMatches = pidsToInclude;
@@ -1970,6 +2137,8 @@ public class SearchBuilder implements ISearchBuilder {
 			case REFERENCE:
 				qp = new ReferenceParam();
 				break;
+			case URI:
+			case HAS:
 			default:
 				throw new InternalErrorException("Don't know how to convert param type: " + theParam.getParamType());
 		}
@@ -2068,14 +2237,18 @@ public class SearchBuilder implements ISearchBuilder {
 
 	@VisibleForTesting
 	public static HandlerTypeEnum getLastHandlerMechanismForUnitTest() {
-		ourLog.info("Retrieving last handler mechanism: {}", ourLastHandlerMechanismForUnitTest);
 		return ourLastHandlerMechanismForUnitTest;
 	}
 
 	@VisibleForTesting
+	public static SearchParameterMap getLastHandlerParamsForUnitTest() {
+		return ourLastHandlerParamsForUnitTest;
+	}
+
+	@VisibleForTesting
 	public static void resetLastHandlerMechanismForUnitTest() {
-		ourLog.info("Clearing last handler mechanism (was {})", ourLastHandlerMechanismForUnitTest);
 		ourLastHandlerMechanismForUnitTest = null;
+		ourLastHandlerParamsForUnitTest = null;
 	}
 
 	static Predicate[] toArray(List<Predicate> thePredicates) {

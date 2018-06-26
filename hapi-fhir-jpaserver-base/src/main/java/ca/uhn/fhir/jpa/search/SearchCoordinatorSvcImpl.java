@@ -178,9 +178,9 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			@Override
 			public List<Long> doInTransaction(TransactionStatus theStatus) {
 				final List<Long> resultPids = new ArrayList<Long>();
-				Page<SearchResult> searchResults = mySearchResultDao.findWithSearchUuid(foundSearch, page);
-				for (SearchResult next : searchResults) {
-					resultPids.add(next.getResourcePid());
+				Page<Long> searchResultPids = mySearchResultDao.findWithSearchUuid(foundSearch, page);
+				for (Long next : searchResultPids) {
+					resultPids.add(next);
 				}
 				return resultPids;
 			}
@@ -420,7 +420,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 			private static final long serialVersionUID = 1L;
 
 			@Override
-			public int getOffset() {
+			public long getOffset() {
 				return theFromIndex;
 			}
 		};
@@ -702,7 +702,7 @@ public class SearchCoordinatorSvcImpl implements ISearchCoordinatorSvc {
 						nextResult.setOrder(myCountSaved++);
 						resultsToSave.add(nextResult);
 					}
-					mySearchResultDao.save(resultsToSave);
+					mySearchResultDao.saveAll(resultsToSave);
 
 					synchronized (mySyncedPids) {
 						int numSyncedThisPass = myUnsyncedPids.size();

@@ -31,7 +31,7 @@ import org.mockito.Captor;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.invocation.InvocationOnMock;
-import org.mockito.runners.MockitoJUnitRunner;
+import org.mockito.junit.MockitoJUnitRunner;
 import org.mockito.stubbing.Answer;
 import org.springframework.data.domain.Page;
 import org.springframework.data.domain.PageImpl;
@@ -143,8 +143,6 @@ public class SearchCoordinatorSvcImplTest {
 		Iterator<Long> iter = new FailAfterNIterator<Long>(new SlowIterator<Long>(pids.iterator(), 2), 300);
 		when(mySearchBuider.createQuery(Mockito.same(params), any(String.class))).thenReturn(iter);
 
-		doAnswer(loadPids()).when(mySearchBuider).loadResourcesByPid(any(List.class), any(List.class), any(Set.class), anyBoolean(), any(EntityManager.class), any(FhirContext.class), same(myCallingDao));
-
 		IBundleProvider result = mySvc.registerSearch(myCallingDao, params, "Patient", new CacheControlDirective());
 		assertNotNull(result.getUuid());
 		assertEquals(null, result.size());
@@ -182,7 +180,7 @@ public class SearchCoordinatorSvcImplTest {
 		ArgumentCaptor<Search> searchCaptor = ArgumentCaptor.forClass(Search.class);
 		verify(mySearchDao, atLeastOnce()).save(searchCaptor.capture());
 
-		verify(mySearchResultDao, atLeastOnce()).save(mySearchResultIterCaptor.capture());
+		verify(mySearchResultDao, atLeastOnce()).saveAll(mySearchResultIterCaptor.capture());
 		List<SearchResult> allResults = new ArrayList<SearchResult>();
 		for (Iterable<SearchResult> next : mySearchResultIterCaptor.getAllValues()) {
 			allResults.addAll(Lists.newArrayList(next));
@@ -323,18 +321,18 @@ public class SearchCoordinatorSvcImplTest {
 					// ignore
 				}
 
-				when(mySearchResultDao.findWithSearchUuid(any(Search.class), any(Pageable.class))).thenAnswer(new Answer<Page<SearchResult>>() {
+				when(mySearchResultDao.findWithSearchUuid(any(Search.class), any(Pageable.class))).thenAnswer(new Answer<Page<Long>>() {
 					@Override
-					public Page<SearchResult> answer(InvocationOnMock theInvocation) throws Throwable {
+					public Page<Long> answer(InvocationOnMock theInvocation) throws Throwable {
 						Pageable page = (Pageable) theInvocation.getArguments()[1];
 
-						ArrayList<SearchResult> results = new ArrayList<SearchResult>();
+						ArrayList<Long> results = new ArrayList<Long>();
 						int max = (page.getPageNumber() * page.getPageSize()) + page.getPageSize();
-						for (int i = page.getOffset(); i < max; i++) {
-							results.add(new SearchResult().setResourcePid(i + 10L));
+						for (long i = page.getOffset(); i < max; i++) {
+							results.add(i + 10L);
 						}
 
-						return new PageImpl<SearchResult>(results);
+						return new PageImpl<Long>(results);
 					}
 				});
 				search.setStatus(SearchStatusEnum.FINISHED);
