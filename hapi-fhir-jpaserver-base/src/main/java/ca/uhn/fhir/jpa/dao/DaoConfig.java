@@ -89,7 +89,7 @@ public class DaoConfig {
 	/**
 	 * update setter javadoc if default changes
 	 */
-	private boolean myAllowContainsSearches = true;
+	private boolean myAllowContainsSearches = false;
 
 	/**
 	 * update setter javadoc if default changes
@@ -144,6 +144,7 @@ public class DaoConfig {
 	private boolean myExpungeEnabled;
 	private int myReindexThreadCount;
 	private Set<String> myBundleTypesAllowedForStorage;
+	private boolean myValidateSearchParameterExpressionsOnSave = true;
 
 	/**
 	 * Constructor
@@ -705,9 +706,9 @@ public class DaoConfig {
 	 * references instead of being treated as real references.
 	 * <p>
 	 * A logical reference is a reference which is treated as an identifier, and
-	 * does not neccesarily resolve. See {@link "http://hl7.org/fhir/references.html"} for
+	 * does not neccesarily resolve. See <a href="http://hl7.org/fhir/references.html">references</a> for
 	 * a description of logical references. For example, the valueset
-	 * {@link "http://hl7.org/fhir/valueset-quantity-comparator.html"} is a logical
+	 * <a href="http://hl7.org/fhir/valueset-quantity-comparator.html">valueset-quantity-comparator</a> is a logical
 	 * reference.
 	 * </p>
 	 * <p>
@@ -730,9 +731,9 @@ public class DaoConfig {
 	 * references instead of being treated as real references.
 	 * <p>
 	 * A logical reference is a reference which is treated as an identifier, and
-	 * does not neccesarily resolve. See {@link "http://hl7.org/fhir/references.html"} for
+	 * does not neccesarily resolve. See <a href="http://hl7.org/fhir/references.html">references</a> for
 	 * a description of logical references. For example, the valueset
-	 * {@link "http://hl7.org/fhir/valueset-quantity-comparator.html"} is a logical
+	 * <a href="http://hl7.org/fhir/valueset-quantity-comparator.html">valueset-quantity-comparator</a> is a logical
 	 * reference.
 	 * </p>
 	 * <p>
@@ -754,7 +755,15 @@ public class DaoConfig {
 	 * If enabled, the server will support the use of :contains searches,
 	 * which are helpful but can have adverse effects on performance.
 	 * <p>
-	 * Default is <code>true</code>
+	 * Default is <code>false</code> (Note that prior to HAPI FHIR
+	 * 3.5.0 the default was <code>true</code>)
+	 * </p>
+	 * <p>
+	 * Note: If you change this value after data already has
+	 * already been stored in the database, you must for a reindexing
+	 * of all data in the database or resources may not be
+	 * searchable.
+	 * </p>
 	 */
 	public boolean isAllowContainsSearches() {
 		return myAllowContainsSearches;
@@ -764,7 +773,15 @@ public class DaoConfig {
 	 * If enabled, the server will support the use of :contains searches,
 	 * which are helpful but can have adverse effects on performance.
 	 * <p>
-	 * Default is <code>true</code>
+	 * Default is <code>false</code> (Note that prior to HAPI FHIR
+	 * 3.5.0 the default was <code>true</code>)
+	 * </p>
+	 * <p>
+	 * Note: If you change this value after data already has
+	 * already been stored in the database, you must for a reindexing
+	 * of all data in the database or resources may not be
+	 * searchable.
+	 * </p>
 	 */
 	public void setAllowContainsSearches(boolean theAllowContainsSearches) {
 		this.myAllowContainsSearches = theAllowContainsSearches;
@@ -1169,6 +1186,34 @@ public class DaoConfig {
 	 */
 	public void setUniqueIndexesEnabled(boolean theUniqueIndexesEnabled) {
 		myUniqueIndexesEnabled = theUniqueIndexesEnabled;
+	}
+
+	/**
+	 * If <code>true</code> (default is <code>true</code>), before allowing a
+	 * SearchParameter resource to be stored (create, update, etc.) the
+	 * expression will be performed against an empty resource to ensure that
+	 * the FHIRPath executor is able to process it.
+	 * <p>
+	 * This should proabably always be set to true, but is configurable
+	 * in order to support some unit tests.
+	 * </p>
+	 */
+	public boolean isValidateSearchParameterExpressionsOnSave() {
+		return myValidateSearchParameterExpressionsOnSave;
+	}
+
+	/**
+	 * If <code>true</code> (default is <code>true</code>), before allowing a
+	 * SearchParameter resource to be stored (create, update, etc.) the
+	 * expression will be performed against an empty resource to ensure that
+	 * the FHIRPath executor is able to process it.
+	 * <p>
+	 * This should proabably always be set to true, but is configurable
+	 * in order to support some unit tests.
+	 * </p>
+	 */
+	public void setValidateSearchParameterExpressionsOnSave(boolean theValidateSearchParameterExpressionsOnSave) {
+		myValidateSearchParameterExpressionsOnSave = theValidateSearchParameterExpressionsOnSave;
 	}
 
 	/**
